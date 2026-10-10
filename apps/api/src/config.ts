@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isIP } from "node:net";
 import { LIMITS } from "@code-compiler/shared";
 
 const numeric = (fallback: number) =>
@@ -37,6 +38,19 @@ const ConfigSchema = z.object({
   rateLimitWindowMs: numeric(60_000),
 
   /**
+   * How many reverse proxies sit in front of the API and append to
+   * `X-Forwarded-For`. The client address is read from the entry the outermost
+   * of them added; anything to its left was written by the caller and is
+   * ignored. Zero means the API is reached directly and the header is not
+   * trusted at all.
+   */
+  trustProxyHops: z.coerce.number().int().min(0).default(0),
+  /** Explicit trusted infrastructure addresses; an empty list trusts no headers. */
+  trustedProxyIps: z.string().default("")
+    .transform((raw) => raw.split(",").map((ip) => ip.trim()).filter(Boolean))
+    .pipe(z.array(z.string().refine((ip) => isIP(ip) !== 0, "Expected a proxy IP address"))),
+
+  /**
    * Hard ceiling on request bodies. The original accepted 50 MB, which made
    * the per-field code-size limit meaningless.
    */
@@ -62,6 +76,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     redisUrl: env["REDIS_URL"],
     rateLimitMax: env["RATE_LIMIT_MAX"],
     rateLimitWindowMs: env["RATE_LIMIT_WINDOW_MS"],
+    trustProxyHops: env["TRUST_PROXY_HOPS"],
+    trustedProxyIps: env["TRUST_PROXY_IPS"],
     maxBodyBytes: env["MAX_BODY_BYTES"],
     streamPollMs: env["STREAM_POLL_MS"],
     streamTimeoutMs: env["STREAM_TIMEOUT_MS"],

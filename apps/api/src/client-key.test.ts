@@ -26,8 +26,8 @@ describe("clientKey", () => {
   });
 
   it("falls back to the socket address when the header is missing or blank", () => {
-    expect(clientKey(undefined, "192.0.2.10", 1)).toBe("192.0.2.10");
-    expect(clientKey(" , ", "192.0.2.10", 1)).toBe("192.0.2.10");
+    expect(clientKey(undefined, "10.0.0.2", 1, trusted)).toBe("10.0.0.2");
+    expect(clientKey(" , ", "10.0.0.2", 1, trusted)).toBe("10.0.0.2");
   });
 
   it("returns a shared key when nothing identifies the caller", () => {

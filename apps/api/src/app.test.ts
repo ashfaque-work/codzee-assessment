@@ -74,6 +74,31 @@ const post = (harness: Harness, body: unknown) =>
 
 const validBody = { language: "python", code: "print(1)" };
 
+describe.each(["/submissions", "/problems/two-sum/submissions"])(
+  "%s request body limits",
+  (route) => {
+    it.each([true, false])(
+      "returns a JSON 413 without queueing (Content-Length: %s)",
+      async (withContentLength) => {
+        const harness = build({ maxBodyBytes: 64 });
+        const body = JSON.stringify({ language: "python", code: "x".repeat(100) });
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (withContentLength) headers["Content-Length"] = String(Buffer.byteLength(body));
+
+        const response = await harness.app.request(route, { method: "POST", headers, body });
+
+        expect(response.status).toBe(413);
+        expect(response.headers.get("content-type")).toContain("application/json");
+        await expect(response.json()).resolves.toEqual({
+          error: "Request body too large",
+          details: { maxBytes: 64 },
+        });
+        expect(harness.store.seen).toHaveLength(0);
+      },
+    );
+  },
+);
+
 describe("POST /submissions", () => {
   // The original awaited `job.finished()` inside the handler, holding the
   // connection open for the whole execution.

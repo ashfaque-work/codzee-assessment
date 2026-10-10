@@ -15,8 +15,9 @@ describe("clientKey", () => {
     );
   });
 
-  it("uses the leftmost entry when the chain is shorter than the hop count", () => {
-    expect(clientKey("203.0.113.7", "10.0.0.2", 2)).toBe("203.0.113.7");
+  it("uses the socket address when the chain is shorter than the hop count", () => {
+    expect(clientKey("203.0.113.7", "10.0.0.2", 2)).toBe("10.0.0.2");
+    expect(clientKey("spoof", undefined, 2)).toBe("unknown");
   });
 
   it("falls back to the socket address when the header is missing or blank", () => {

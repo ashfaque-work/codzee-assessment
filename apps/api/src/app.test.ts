@@ -227,7 +227,7 @@ describe("rate limiting", () => {
     expect(response.headers.get("x-ratelimit-remaining")).toBe("4");
   });
 
-  const postFrom = (harness: Harness, forwardedFor: string) =>
+  const postFrom = (harness: Harness, forwardedFor: string, remote?: string) =>
     harness.app.request("/submissions", {
       method: "POST",
       headers: {
@@ -235,7 +235,7 @@ describe("rate limiting", () => {
         "X-Forwarded-For": forwardedFor,
       },
       body: JSON.stringify(validBody),
-    });
+    }, { incoming: { socket: { remoteAddress: remote } } });
 
   it("ignores X-Forwarded-For when no proxy is trusted", async () => {
     const harness = build({ rateLimitMax: 1, rateLimitWindowMs: 60_000 });
@@ -257,6 +257,25 @@ describe("rate limiting", () => {
     expect((await postFrom(harness, "9.9.9.9, 203.0.113.7")).status).toBe(429);
     // A different real client has its own allowance.
     expect((await postFrom(harness, "1.1.1.1, 198.51.100.4")).status).toBe(202);
+  });
+
+  it("separates socket peers while ignoring caller-controlled headers", async () => {
+    const harness = build({ rateLimitMax: 1, rateLimitWindowMs: 60_000 });
+
+    expect((await postFrom(harness, "spoof", "192.0.2.10")).status).toBe(202);
+    expect((await postFrom(harness, "different-spoof", "192.0.2.10")).status).toBe(429);
+    expect((await postFrom(harness, "spoof", "192.0.2.11")).status).toBe(202);
+  });
+
+  it("shares the socket bucket when the forwarding chain is incomplete", async () => {
+    const harness = build({
+      rateLimitMax: 1,
+      rateLimitWindowMs: 60_000,
+      trustProxyHops: 2,
+    });
+
+    expect((await postFrom(harness, "spoof", "10.0.0.2")).status).toBe(202);
+    expect((await postFrom(harness, "different-spoof", "10.0.0.2")).status).toBe(429);
   });
 
   // Only the endpoint that costs a container is limited.

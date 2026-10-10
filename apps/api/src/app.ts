@@ -288,7 +288,8 @@ export function clientKey(
       .split(",")
       .map((entry) => entry.trim())
       .filter((entry) => entry.length > 0);
-    const client = hops[Math.max(0, hops.length - trustedHops)];
+    const client =
+      hops.length >= trustedHops ? hops[hops.length - trustedHops] : undefined;
     if (client) return client;
   }
   return remote || "unknown";

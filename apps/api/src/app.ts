@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { BlockList, isIP } from "node:net";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
@@ -55,6 +56,10 @@ export function createApp(deps: AppDeps): Hono {
   );
 
   // Applied to every endpoint that costs a container.
+  const trustedProxies = new BlockList();
+  for (const ip of config.trustedProxyIps) {
+    trustedProxies.addAddress(ip, isIP(ip) === 6 ? "ipv6" : "ipv4");
+  }
   const rateLimitPosts = async (
     c: Parameters<Parameters<Hono["use"]>[1]>[0],
     next: () => Promise<void>,
@@ -67,6 +72,7 @@ export function createApp(deps: AppDeps): Hono {
         c.req.header("x-forwarded-for"),
         remoteAddress(c),
         config.trustProxyHops,
+        trustedProxies,
       ),
       config.rateLimitMax,
       config.rateLimitWindowMs,
@@ -272,25 +278,36 @@ export type { SubmissionStatus };
 /**
  * Identifies the caller for rate limiting.
  *
- * Each proxy appends the address it received the request from, so only the
- * right-hand `trustedHops` entries were written by infrastructure. The entry
- * the outermost trusted proxy added is the client; everything to its left is
- * caller-controlled. Taking the leftmost entry, as this used to, let anyone
- * send a fresh `X-Forwarded-For` per request and never be limited.
+ * Trust forwarding headers only when the socket peer and all expected proxy
+ * hops match the configured IP allowlist. The outermost proxy's appended peer
+ * is the client; caller-written entries to its left are ignored. Incomplete,
+ * padded, or unrecognized paths fall back to the socket peer rather than
+ * letting a header create arbitrary rate-limit buckets.
  */
 export function clientKey(
   forwardedFor: string | undefined,
   remote: string | undefined,
   trustedHops: number,
+  trustedProxies?: BlockList,
 ): string {
-  if (trustedHops > 0 && forwardedFor) {
+  const trusted = (ip: string | undefined): boolean => {
+    if (!ip || !trustedProxies) return false;
+    const version = isIP(ip);
+    return version !== 0 && trustedProxies.check(ip, version === 6 ? "ipv6" : "ipv4");
+  };
+  if (trustedHops > 0 && forwardedFor && trusted(remote)) {
     const hops = forwardedFor
       .split(",")
       .map((entry) => entry.trim())
       .filter((entry) => entry.length > 0);
-    const client =
-      hops.length >= trustedHops ? hops[hops.length - trustedHops] : undefined;
-    if (client) return client;
+    if (hops.length < trustedHops) return remote || "unknown";
+    // Count alone cannot distinguish a real proxy from caller-written padding.
+    // Verify every trusted hop, starting at the actual socket peer.
+    for (let index = 1; index < trustedHops; index += 1) {
+      if (!trusted(hops[hops.length - index])) return remote || "unknown";
+    }
+    const client = hops[hops.length - trustedHops];
+    if (client && isIP(client) !== 0) return client;
   }
   return remote || "unknown";
 }

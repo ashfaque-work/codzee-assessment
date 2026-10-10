@@ -240,9 +240,9 @@ describe("rate limiting", () => {
   it("ignores X-Forwarded-For when no proxy is trusted", async () => {
     const harness = build({ rateLimitMax: 1, rateLimitWindowMs: 60_000 });
 
-    expect((await postFrom(harness, "10.0.0.1")).status).toBe(202);
+    expect((await postFrom(harness, "10.0.0.1", "192.0.2.10")).status).toBe(202);
     // A new spoofed address must not buy a new allowance.
-    expect((await postFrom(harness, "10.0.0.2")).status).toBe(429);
+    expect((await postFrom(harness, "10.0.0.2", "192.0.2.10")).status).toBe(429);
   });
 
   it("keys on the address the trusted proxy appended", async () => {
@@ -250,13 +250,14 @@ describe("rate limiting", () => {
       rateLimitMax: 1,
       rateLimitWindowMs: 60_000,
       trustProxyHops: 1,
+      trustedProxyIps: ["10.0.0.2"],
     });
 
-    expect((await postFrom(harness, "1.1.1.1, 203.0.113.7")).status).toBe(202);
+    expect((await postFrom(harness, "1.1.1.1, 203.0.113.7", "10.0.0.2")).status).toBe(202);
     // Same real client, different caller-written prefix: still limited.
-    expect((await postFrom(harness, "9.9.9.9, 203.0.113.7")).status).toBe(429);
+    expect((await postFrom(harness, "9.9.9.9, 203.0.113.7", "10.0.0.2")).status).toBe(429);
     // A different real client has its own allowance.
-    expect((await postFrom(harness, "1.1.1.1, 198.51.100.4")).status).toBe(202);
+    expect((await postFrom(harness, "1.1.1.1, 198.51.100.4", "10.0.0.2")).status).toBe(202);
   });
 
   it("separates socket peers while ignoring caller-controlled headers", async () => {
@@ -272,10 +273,18 @@ describe("rate limiting", () => {
       rateLimitMax: 1,
       rateLimitWindowMs: 60_000,
       trustProxyHops: 2,
+      trustedProxyIps: ["10.0.0.2", "10.0.0.5"],
     });
 
     expect((await postFrom(harness, "spoof", "10.0.0.2")).status).toBe(202);
     expect((await postFrom(harness, "different-spoof", "10.0.0.2")).status).toBe(429);
+  });
+
+  it("cannot rotate rate-limit buckets by padding a shorter proxy route", async () => {
+    const harness = build({ rateLimitMax: 1, rateLimitWindowMs: 60_000,
+      trustProxyHops: 2, trustedProxyIps: ["10.0.0.2", "10.0.0.5"] });
+    expect((await postFrom(harness, "192.0.2.1, 192.0.2.2, 203.0.113.7", "10.0.0.2")).status).toBe(202);
+    expect((await postFrom(harness, "192.0.2.3, 192.0.2.4, 203.0.113.7", "10.0.0.2")).status).toBe(429);
   });
 
   // Only the endpoint that costs a container is limited.
@@ -296,5 +305,16 @@ describe("unknown routes", () => {
     await expect(response.json()).resolves.toMatchObject({
       error: "Not found",
     });
+  });
+});
+
+describe("trusted proxy configuration", () => {
+  it("parses a comma-separated allowlist of IP addresses", () => {
+    expect(loadConfig({ TRUST_PROXY_IPS: " 10.0.0.2, 2001:db8::2 " }).trustedProxyIps)
+      .toEqual(["10.0.0.2", "2001:db8::2"]);
+  });
+
+  it("rejects invalid proxy addresses rather than treating them as trusted", () => {
+    expect(() => loadConfig({ TRUST_PROXY_IPS: "10.0.0.2, not-an-ip" })).toThrow();
   });
 });

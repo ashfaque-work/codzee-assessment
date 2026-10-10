@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isIP } from "node:net";
 import { LIMITS } from "@code-compiler/shared";
 
 const numeric = (fallback: number) =>
@@ -44,6 +45,10 @@ const ConfigSchema = z.object({
    * trusted at all.
    */
   trustProxyHops: z.coerce.number().int().min(0).default(0),
+  /** Explicit trusted infrastructure addresses; an empty list trusts no headers. */
+  trustedProxyIps: z.string().default("")
+    .transform((raw) => raw.split(",").map((ip) => ip.trim()).filter(Boolean))
+    .pipe(z.array(z.string().refine((ip) => isIP(ip) !== 0, "Expected a proxy IP address"))),
 
   /**
    * Hard ceiling on request bodies. The original accepted 50 MB, which made
@@ -72,6 +77,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     rateLimitMax: env["RATE_LIMIT_MAX"],
     rateLimitWindowMs: env["RATE_LIMIT_WINDOW_MS"],
     trustProxyHops: env["TRUST_PROXY_HOPS"],
+    trustedProxyIps: env["TRUST_PROXY_IPS"],
     maxBodyBytes: env["MAX_BODY_BYTES"],
     streamPollMs: env["STREAM_POLL_MS"],
     streamTimeoutMs: env["STREAM_TIMEOUT_MS"],
